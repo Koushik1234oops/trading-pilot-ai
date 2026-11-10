@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agentic Trading Bot</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --red: #f85149; --blue: #58a6ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f8fa; --panel: #ffffff; --border: #d0d7de; --text: #1f2328; --muted: #656d76; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  header h1 { font-size: 20px; margin: 0; }
+  .status { font-size: 14px; color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  main { padding: 20px 24px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .big { font-size: 28px; font-weight: 600; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+  .wide { grid-column: 1 / -1; }
+  canvas { width: 100%; height: 260px; display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { background: var(--blue); color: #fff; border: 0; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button.stop { background: var(--red); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; font-size: 14px; width: 130px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--border); }
+  .log { height: 200px; overflow-y: auto; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+  .log .buy { color: var(--green); } .log .sell { color: var(--red); } .log .think { color: var(--muted); }
+  .agent-state { font-size: 15px; margin-bottom: 8px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--border); font-size: 12px; margin-right: 4px; }
+  @media (max-width: 600px) { main, header { padding: 14px; } .big { font-size: 24px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agentic Trading Bot</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Agent idle</span></div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Portfolio Value</h2>
+    <div class="big" id="equity">$10,000.00</div>
+    <div id="pnl" class="pos">+$0.00 (0.00%)</div>
+  </section>
+
+  <section class="card">
+    <h2>Cash / Holdings</h2>
+    <div class="big" id="cash">$10,000.00</div>
+    <div id="holdings">0.0000 shares</div>
+  </section>
+
+  <section class="card">
+    <h2>Market Price</h2>
+    <div class="big" id="price">$100.00</div>
+    <div id="change" class="pos">+0.00%</div>
+  </section>
+
+  <section class="card">
+    <h2>Agent Brain</h2>
+    <div class="agent-state" id="agentState">Waiting to start</div>
+    <div><span class="tag" id="sigMA">SMA: -</span><span class="tag" id="sigRSI">RSI: -</span></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Price Chart (Fast SMA vs Slow SMA)</h2>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>Controls</h2>
+    <div class="controls">
+      <label>Start price
+        <input type="number" id="startPrice" value="100" min="1">
+      </label>
+      <label>Volatility %
+        <input type="number" id="vol" value="2" min="0.1" step="0.1">
+      </label>
+      <label>Speed
+        <select id="speed">
+          <option value="1000">Slow</option>
+          <option value="500" selected>Normal</option>
+          <option value="150">Fast</option>
+        </select>
+      </label>
+    </div>
+    <p></p>
+    <div class="controls">
+      <button id="startBtn">Start Agent</button>
+      <button id="stopBtn" class="stop" disabled>Stop</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Agent Log</h2>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Trade History</h2>
+    <table>
+      <thead><tr><th>#</th><th>Time</th><th>Action</th><th>Price</th><th>Qty</th><th>Reason</th></tr></thead>
+      <tbody id="trades"><tr><td colspan="6" style="color:var(--muted)">No trades yet</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+/* ============================================================
+   AgentTrade: a rule-based trading agent with a perceive ->
+   decide -> act loop. Market is simulated (random walk).
+   The agent uses SMA crossover + RSI, with a risk guard.
+   ============================================================ */
+
+const INITIAL_CASH = 10000;
+const FAST = 5, SLOW = 15, RSI_N = 14;
+
+let state, timer = null, history = [], prices = [];
+
+function fmt(n) { return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' }); }
+
+function reset() {
+  const start = parseFloat(document.getElementById('startPrice').value) || 100;
+  state = {
+    cash: INITIAL_CASH, shares: 0, price: start, startPrice: start,
+    avgCost: 0, tick: 0, trades: [], equityHist: []
+  };
+  prices = [start];
+  history = [];
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('trades').innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No trades yet</td></tr>';
+  logMsg('Agent reset. Capital: ' + fmt(INITIAL_CASH), 'think');
+  render();
+}
+
+/* ---------- PERCEIVE: market data ---------- */
+function marketTick() {
+  const vol = (parseFloat(document.getElementById('vol').value) || 2) / 100;
+  const shock = (Math.random() * 2 - 1) * vol;
+  const drift = Math.sin(state.tick / 25) * 0.004; // gentle market cycle
+  state.price = Math.max(1, state.price * (1 + shock + drift));
+  prices.push(state.price);
+  state.tick++;
+}
+
+function sma(arr, n) {
+  if (arr.length < n) return null;
+  return arr.slice(-n).reduce((a, b) => a + b, 0) / n;
+}
+
+function rsi(arr, n) {
+  if (arr.length < n + 1) return null;
+  let gain = 0, loss = 0;
+  for (let i = arr.length - n; i < arr.length; i++) {
+    const d = arr[i] - arr[i - 1];
+    d >= 0 ? gain += d : loss -= d;
+  }
+  if (loss === 0) return 100;
+  const rs = (gain / n) / (loss / n);
+  return 100 - 100 / (1 + rs);
+}
+
+/* ---------- DECIDE: agent policy ---------- */
+function decide() {
+  const fast = sma(prices, FAST), slow = sma(prices, SLOW), r = rsi(prices, RSI_N);
+  const equity = state.cash + state.shares * state.price;
+
+  document.getElementById('sigMA').textContent = 'SMA: ' + (fast && slow ? (fast > slow ? 'bullish' : 'bearish') : '-');
+  document.getElementById('sigRSI').textContent = 'RSI: ' + (r !== null ? r.toFixed(1) : '-');
+
+  if (fast === null || slow === null || r === null) {
+    return { action: 'HOLD', reason: 'warming up indicators' };
+  }
+
+  // Risk guard: stop-loss at -8% of avg cost, take-profit at +12%
+  if (state.shares > 0) {
+    const move = state.price / state.avgCost - 1;
+    if (move <= -0.08) return { action: 'SELL', reason: 'stop-loss hit' };
+    if (move >= 0.12) return { action: 'SELL', reason: 'take-profit hit' };
+  }
+
+  const bullish = fast > slow;
+  const bearish = fast < slow;
+
+  if (bullish && r < 65 && state.cash > state.price) {
+    return { action: 'BUY', reason: 'SMA bullish, RSI ' + r.toFixed(0) };
+  }
+  if ((bearish || r > 75) && state.shares > 0) {
+    return { action: 'SELL', reason: bearish ? 'SMA bearish' : 'RSI overbought' };
+  }
+  return { action: 'HOLD', reason: 'no edge (RSI ' + r.toFixed(0) + ')' };
+}
+
+/* ---------- ACT: execute trade with position sizing ---------- */
+function act(decision) {
+  const p = state.price;
+  if (decision.action === 'BUY') {
+    const spend = state.cash * 0.5;               // risk 50% of cash per entry
+    const qty = spend / p;
+    if (qty * p < 1) return;
+    state.avgCost = (state.avgCost * state.shares + qty * p) / (state.shares + qty);
+    state.cash -= qty * p;
+    state.shares += qty;
+    recordTrade('BUY', qty, decision.reason);
+  } else if (decision.action === 'SELL' && state.shares > 0) {
+    const qty = state.shares;
+    state.cash += qty * p;
+    state.shares = 0;
+    state.avgCost = 0;
+    recordTrade('SELL', qty, decision.reason);
+  }
+}
+
+function recordTrade(side, qty, reason) {
+  const t = { n: state.trades.length + 1, time: new Date().toLocaleTimeString(), side, price: state.price, qty, reason };
+  state.trades.push(t);
+  logMsg(`${side} ${qty.toFixed(4)} @ ${fmt(state.price)} | ${reason}`, side.toLowerCase());
+  renderTrades();
+}
+
+/* ---------- LOOP ---------- */
+function step() {
+  marketTick();
+  const d = decide();
+  document.getElementById('agentState').textContent = d.action + ': ' + d.reason;
+  if (d.action !== 'HOLD') act(d);
+  else if (state.tick % 5 === 0) logMsg('HOLD - ' + d.reason, 'think');
+  state.equityHist.push(state.cash + state.shares * state.price);
+  render();
+}
+
+function start() {
+  if (timer) return;
+  setRunning(true);
+  logMsg('Agent started.', 'think');
+  timer = setInterval(step, parseInt(document.getElementById('speed').value, 10));
+}
+
+function stop() {
+  clearInterval(timer); timer = null;
+  setRunning(false);
+  logMsg('Agent stopped.', 'think');
+}
+
+function setRunning(on) {
+  document.getElementById('dot').classList.toggle('on', on);
+  document.getElementById('statusText').textContent = on ? 'Agent running' : 'Agent idle';
+  document.getElementById('startBtn').disabled = on;
+  document.getElementById('stopBtn').disabled = !on;
+}
+
+/* ---------- RENDER ---------- */
+function render() {
+  const equity = state.cash + state.shares * state.price;
+  const pnl = equity - INITIAL_CASH;
+  const pct = (pnl / INITIAL_CASH) * 100;
+  const cls = pnl >= 0 ? 'pos' : 'neg';
+  document.getElementById('equity').textContent = fmt(equity);
+  document.getElementById('pnl').className = cls;
+  document.getElementById('pnl').textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)} (${pct.toFixed(2)}%)`;
+  document.getElementById('cash').textContent = fmt(state.cash);
+  document.getElementById('holdings').textContent = state.shares.toFixed(4) + ' shares';
+  document.getElementById('price').textContent = fmt(state.price);
+  const ch = (state.price / state.startPrice - 1) * 100;
+  document.getElementById('change').className = ch >= 0 ? 'pos' : 'neg';
+  document.getElementById('change').textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}% vs start`;
+  drawChart();
+}
+
+function renderTrades() {
+  const tbody = document.getElementById('trades');
+  tbody.innerHTML = state.trades.slice().reverse().map(t =>
+    `<tr><td>${t.n}</td><td>${t.time}</td><td class="${t.side === 'BUY' ? 'pos' : 'neg'}">${t.side}</td>
+     <td>${fmt(t.price)}</td><td>${t.qty.toFixed(4)}</td><td>${t.reason}</td></tr>`).join('');
+}
+
+function logMsg(msg, cls) {
+  const log = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = cls || '';
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  log.prepend(line);
+  while (log.children.length > 150) log.lastChild.remove();
+}
+
+function drawChart() {
+  const c = document.getElementById('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (prices.length < 2) return;
+
+  const data = prices.slice(-120);
+  const fastS = [], slowS = [];
+  for (let i = 0; i < data.length; i++) {
+    const slice = prices.slice(0, prices.length - data.length + i + 1);
+    fastS.push(sma(slice, FAST)); slowS.push(sma(slice, SLOW));
+  }
+  const all = data.concat(fastS.filter(Boolean), slowS.filter(Boolean));
+  const min = Math.min(...all) * 0.998, max = Math.max(...all) * 1.002;
+  const x = i => (i / (data.length - 1)) * w;
+  const y = v => h - ((v - min) / (max - min)) * h;
+
+  const line = (arr, color, width) => {
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = width;
+    let started = false;
+    arr.forEach((v, i) => {
+      if (v == null) return;
+      started ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v));
+      started = true;
+    });
+    ctx.stroke();
+  };
+  line(data, '#8b949e', 1.5);
+  line(fastS, '#58a6ff', 2);
+  line(slowS, '#d29922', 2);
+
+  // Mark trades that fall in the visible window
+  const offset = prices.length - data.length;
+  state.trades.forEach(t => {
+    const idx = t.idx ?? -1;
+  });
+  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#8b949e';
+  ctx.fillText('price', 8, 14);
+  ctx.fillStyle = '#58a6ff'; ctx.fillText('fast SMA', 60, 14);
+  ctx.fillStyle = '#d29922'; ctx.fillText('slow SMA', 130, 14);
+}
+
+document.getElementById('startBtn').onclick = start;
+document.getElementById('stopBtn').onclick = stop;
+document.getElementById('resetBtn').onclick = () => { stop(); reset(); };
+reset();
+window.addEventListener('resize', drawChart);
+</script>
+</body>
+</html>
